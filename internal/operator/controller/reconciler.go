@@ -770,6 +770,15 @@ func (r *GameServerReconciler) reconcilePod(s *scope) error {
 			return err
 		}
 		if state.State == v1alpha1.ProcessOffline {
+			// Offline is not idle: Wings runs installs, backups and restores
+			// with the process stopped, and they need this pod.
+			if reason, msg := busyOffline(s.gs, pod); reason != "" {
+				r.setCondition(s, v1alpha1.ConditionRecreatePending, metav1.ConditionTrue, reason, msg)
+				if s.requeue == 0 {
+					s.requeue = requeueSlow
+				}
+				return nil
+			}
 			r.event(s, corev1.EventTypeNormal, "Recreate", "deleting pod to apply the new template")
 			if err := r.Delete(s.ctx, pod); err != nil && !apierrors.IsNotFound(err) {
 				return err
@@ -783,6 +792,35 @@ func (r *GameServerReconciler) reconcilePod(s *scope) error {
 		}
 	}
 	return nil
+}
+
+// busyOffline names the work in flight that a pod recreate would abort while
+// the process is offline: an install the agent accepted and has not finished,
+// or a backup or restore the gateway recorded. Backup records older than the
+// current agent process are left over from an agent that died before it
+// reported, so they do not count.
+func busyOffline(gs *v1alpha1.GameServer, pod *corev1.Pod) (reason, msg string) {
+	if st := gs.Status.Install; st.Result == v1alpha1.InstallRunning && gs.Spec.Install.Generation > st.ObservedGeneration {
+		return "InstallInFlight", "an install is running; the pod is recreated once it finishes"
+	}
+	since := agentStartedAt(pod)
+	for _, b := range gs.Status.Backups.Pending {
+		if !b.StartedAt.Time.Before(since) {
+			return "BackupInFlight", fmt.Sprintf("backup %s is in progress; the pod is recreated once it finishes", b.UUID)
+		}
+	}
+	return "", ""
+}
+
+// agentStartedAt is when the running agent container started, or the zero time
+// if that is unknown (every backup record then counts).
+func agentStartedAt(pod *corev1.Pod) time.Time {
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name == render.AgentContainer && cs.State.Running != nil {
+			return cs.State.Running.StartedAt.Time
+		}
+	}
+	return time.Time{}
 }
 
 func (r *GameServerReconciler) newAgent(base, token string) AgentAPI {

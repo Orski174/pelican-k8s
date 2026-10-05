@@ -589,6 +589,98 @@ func TestImageChangeRecreatesWhenOffline(t *testing.T) {
 	}
 }
 
+// recreatePendingWhileOffline brings up a server whose pod is outdated (image
+// change) while the process is offline, with the agent container started at
+// agentStart. prepare runs before the change that would recreate the pod.
+func recreatePendingWhileOffline(t *testing.T, agentStart time.Time, prepare func(*harness)) *harness {
+	t.Helper()
+	h := newHarness(t, newGS(), newClass())
+	h.reconcile(2)
+	pod := h.createPod(true)
+	pod.Status.InitContainerStatuses[0].State.Running = &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(agentStart)}
+	if err := h.c.Status().Update(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile(2)
+	prepare(h)
+	h.updateGS(func(gs *v1alpha1.GameServer) {
+		gs.Spec.Panel.Settings = settingsJSON(2048, 200, 5120, "ghcr.io/pelican-eggs/yolks:java_25", false)
+	})
+	h.reconcile(2)
+	return h
+}
+
+// Wings runs backups and restores while the process is offline, staging the
+// archive on the pod's scratch volume. Deleting the pod then would abort them.
+func TestRecreateWaitsForPendingBackup(t *testing.T) {
+	h := recreatePendingWhileOffline(t, time.Date(2026, 9, 16, 11, 0, 0, 0, time.UTC), func(h *harness) {
+		h.patchStatus(func(gs *v1alpha1.GameServer) {
+			gs.Status.Backups.Pending = []v1alpha1.PendingBackup{{UUID: "b1", StartedAt: metav1.NewTime(time.Date(2026, 9, 16, 11, 30, 0, 0, time.UTC))}}
+		})
+	})
+	if h.pod() == nil {
+		t.Fatal("the pod must not be recreated while a backup is in flight")
+	}
+	c := meta.FindStatusCondition(h.gs().Status.Conditions, v1alpha1.ConditionRecreatePending)
+	if c == nil || c.Status != metav1.ConditionTrue || c.Reason != "BackupInFlight" {
+		t.Fatalf("recreate condition %+v", c)
+	}
+
+	// The completion clears the record; the recreate proceeds.
+	h.patchStatus(func(gs *v1alpha1.GameServer) { gs.Status.Backups.Pending = []v1alpha1.PendingBackup{} })
+	h.reconcile(1)
+	if h.pod() != nil {
+		t.Fatal("the pod should be recreated once the backup finished")
+	}
+}
+
+// A record left by a backup that started before the current agent process
+// cannot be running any more (the agent restarted, or the pod was replaced
+// before the completion was reported); it must not hold the recreate forever.
+func TestRecreateIgnoresBackupFromEarlierAgent(t *testing.T) {
+	h := recreatePendingWhileOffline(t, time.Date(2026, 9, 16, 11, 0, 0, 0, time.UTC), func(h *harness) {
+		h.patchStatus(func(gs *v1alpha1.GameServer) {
+			gs.Status.Backups.Pending = []v1alpha1.PendingBackup{{UUID: "b0", StartedAt: metav1.NewTime(time.Date(2026, 9, 15, 9, 0, 0, 0, time.UTC))}}
+		})
+	})
+	if h.pod() != nil {
+		t.Fatal("a stale backup record must not hold the recreate")
+	}
+}
+
+// Installs run while the process is offline, with the install Job tied to the
+// game pod; recreating it mid-install restarts the install from scratch.
+func TestRecreateWaitsForInstall(t *testing.T) {
+	h := recreatePendingWhileOffline(t, time.Date(2026, 9, 16, 11, 0, 0, 0, time.UTC), func(h *harness) {
+		// A reinstall the agent has accepted and not yet reported on.
+		h.updateGS(func(gs *v1alpha1.GameServer) {
+			gs.Spec.Install = v1alpha1.InstallSpec{Generation: 1, ScriptConfigMap: names.InstallConfigMap(uuid, 1)}
+		})
+		h.patchStatus(func(gs *v1alpha1.GameServer) {
+			gs.Status.Install.RequestedGeneration = 1
+			gs.Status.Install.Result = v1alpha1.InstallRunning
+			now := metav1.NewTime(h.now)
+			gs.Status.Install.RequestedAt = &now
+		})
+	})
+	if h.pod() == nil {
+		t.Fatal("the pod must not be recreated while an install is in flight")
+	}
+	c := meta.FindStatusCondition(h.gs().Status.Conditions, v1alpha1.ConditionRecreatePending)
+	if c == nil || c.Status != metav1.ConditionTrue || c.Reason != "InstallInFlight" {
+		t.Fatalf("recreate condition %+v", c)
+	}
+
+	h.patchStatus(func(gs *v1alpha1.GameServer) {
+		gs.Status.Install.Result = v1alpha1.InstallSucceeded
+		gs.Status.Install.ObservedGeneration = 1
+	})
+	h.reconcile(1)
+	if h.pod() != nil {
+		t.Fatal("the pod should be recreated once the install finished")
+	}
+}
+
 func TestRestartRequestAndResize(t *testing.T) {
 	h := newHarness(t, newGS(), newClass())
 	h.reconcile(2)

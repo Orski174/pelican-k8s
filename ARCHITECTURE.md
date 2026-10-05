@@ -964,6 +964,12 @@ Wings applies a new image at the next start by recreating the container. Equival
    StatefulSet template and sets `RecreatePending`.
 2. If the process is `offline`, the operator deletes the pod immediately. Otherwise it waits: on the next
    `spec.power` change to `Stopped`, or when the process reaches `offline`, it deletes the pod.
+   Offline is not idle: Wings runs installs, backups and restores with the process stopped, and the
+   pod (install Job affinity, archives on the scratch volume) is part of them. The operator also waits
+   while `status.install` has a requested generation running, or `status.backups.pending` holds a
+   backup or restore started since the agent container came up (older records belong to an agent
+   that died before it reported); `RecreatePending` then says `InstallInFlight` or `BackupInFlight`.
+   The same rule covers every deferred recreate (restart request, resize that needs a new pod).
    A `start` while `RecreatePending` is set is executed as "delete the pod, then start in the new
    one": the operator does not issue `POST /power {start}` to the old pod.
 3. The new pod's agent comes up; the fresh-pod rule (§7.6) issues `start` if `desired: Running`.

@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- A deferred pod recreate no longer interrupts an install, backup or restore. The operator recreated a pod with a pending template change, restart request or resize as soon as the process was `offline`, but Wings runs installs, backups and restores with the process stopped: the install Job is tied to the game pod and backup archives are staged on its scratch volume. The recreate now also waits until no install is running and no backup or restore recorded in `status.backups.pending` since the agent container started is in flight; `RecreatePending` says `InstallInFlight` or `BackupInFlight` meanwhile. Records older than the agent container belong to an agent that died before reporting and are ignored.
+
 ## [1.0.1] - 2026-10-02
 
 Republishes 1.0.0 with a tree that matches its tag. The images and the OCI chart of 1.0.0 were correct; anything installed from a checkout or the `v1.0.0` git tag was not.

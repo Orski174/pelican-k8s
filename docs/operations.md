@@ -36,7 +36,7 @@ owned by the gateway and overwritten on the next Panel sync.
 | Event | Behaviour |
 |---|---|
 | Panel edits limits | `sync` → operator resizes the pod in place (CPU/memory) and expands the PVC (disk) |
-| Panel changes the image | `RecreatePending`; the pod is recreated once the process is offline (a start while pending recreates first) |
+| Panel changes the image | `RecreatePending`; the pod is recreated once the process is offline and no install, backup or restore is running (a start while pending recreates first) |
 | Pod deleted / node drained | `preStop` hooks run Wings' stop procedure (stop command, wait, terminate) before containers receive SIGTERM; the new pod starts the server again if `desired: Running` |
 | Game container OOM-killed | kubelet restarts the container; the operator relays the exit to the agent; Wings' crash handler restarts the process (unless the previous crash was < 60 s ago) |
 | Agent container restarts | the game keeps running; the agent re-attaches to the shim and replays the output ring buffer |
@@ -73,6 +73,7 @@ Upgrading the Panel is independent; re-run the compatibility checks in
 | `AgentReady=False` for long | `kubectl describe pod`: image pulls, the `probe-entrypoint` init container (unknown egg image layout), agent logs (`cannot reach gateway` → NetworkPolicy/DNS) |
 | Install stuck in `InstallPrepared=False` | the agent must reach the gateway's remote API; `prepareTimeoutSeconds` fails it eventually |
 | Install Job never gets a pod | `kubectl describe job`: admission policy or SCC rejection message |
+| `RecreatePending=BackupInFlight` / `InstallInFlight` | The process is offline, but a backup, restore or install is using the pod; it is recreated once that finishes. Backup records from before the agent container last started are ignored |
 | Console shows nothing | websocket goes browser → ingress → gateway → agent; check ingress websocket support and `gateway.allowedOrigins` |
 | `server pod unavailable` (503) | the game pod is not running or the agent sidecar has not started |
 | Players cannot connect | `kubectl get svc gs-<uuid>`; NodePort mode needs allocation ports in the NodePort range; check `ExposureReady` |
