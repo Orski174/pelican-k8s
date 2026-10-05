@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -651,6 +652,25 @@ func limitsRemoved(want, have corev1.ResourceRequirements) []string {
 	return out
 }
 
+// resizeRefused reports a resize the API server rejects by validation and will
+// keep rejecting: Kubernetes before 1.34 forbids lowering (or adding) the memory
+// limit of a container whose resizePolicy is NotRequired. Conflicts, timeouts
+// and other validation errors are not included; they are retried in place.
+func resizeRefused(err error) bool {
+	if !apierrors.IsInvalid(err) {
+		return false
+	}
+	var status apierrors.APIStatus
+	if errors.As(err, &status) && status.Status().Details != nil {
+		for _, c := range status.Status().Details.Causes {
+			if c.Type == metav1.CauseType(field.ErrorTypeForbidden) && strings.HasSuffix(c.Field, ".resources.limits[memory]") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // reconcilePod handles recreation, in-place resize, node loss and exit relay.
 func (r *GameServerReconciler) reconcilePod(s *scope) error {
 	pod := s.pod
@@ -712,7 +732,16 @@ func (r *GameServerReconciler) reconcilePod(s *scope) error {
 			} else {
 				resized := pod.DeepCopy()
 				resized.Spec.Containers[i].Resources = want
-				if err := r.SubResource("resize").Update(s.ctx, resized); err != nil {
+				if err := r.SubResource("resize").Update(s.ctx, resized); resizeRefused(err) {
+					// Before Kubernetes 1.34 the API refuses to lower a memory
+					// limit in place. Retrying cannot succeed, so land it on a
+					// fresh pod like a removed limit.
+					resizeRecreate = true
+					r.setCondition(s, v1alpha1.ConditionResizePending, metav1.ConditionTrue, "RecreateRequired",
+						"this Kubernetes version cannot lower the memory limit in place; it is applied once the process is offline")
+					r.setCondition(s, v1alpha1.ConditionRecreatePending, metav1.ConditionTrue, "ResizeNeedsRecreate",
+						"resources cannot be applied in place; the pod is recreated once the process is offline")
+				} else if err != nil {
 					r.setCondition(s, v1alpha1.ConditionResizePending, metav1.ConditionTrue, "ResizeFailed", truncate(err.Error()))
 				} else {
 					r.event(s, corev1.EventTypeNormal, "Resized", "applied in-place resource change")

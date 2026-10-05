@@ -33,6 +33,7 @@ import (
 	"github.com/Claiyc/pelican-k8s/internal/operator/agentclient"
 	"github.com/Claiyc/pelican-k8s/internal/operator/names"
 	"github.com/Claiyc/pelican-k8s/internal/operator/render"
+	"github.com/Claiyc/pelican-k8s/internal/operator/settings"
 )
 
 const (
@@ -974,6 +975,198 @@ func TestUnlimitedCPUWaitsForOffline(t *testing.T) {
 	}
 	if !meta.IsStatusConditionTrue(h.gs().Status.Conditions, v1alpha1.ConditionRecreatePending) {
 		t.Fatal("recreate should stay pending while the process runs")
+	}
+}
+
+// k133Resize mimics the resize subresource of Kubernetes 1.33, which refuses
+// to lower the memory limit of a container whose resizePolicy is NotRequired.
+// Any other resize is applied to the pod spec. With a non-nil err every resize
+// fails with that error instead. resizes counts the attempts.
+func k133Resize(resizes *int, err error) interceptor.Funcs {
+	return interceptor.Funcs{
+		SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			pod, ok := obj.(*corev1.Pod)
+			if !ok || sub != "resize" {
+				return c.SubResource(sub).Update(ctx, obj, opts...)
+			}
+			*resizes++
+			if err != nil {
+				return err
+			}
+			cur := &corev1.Pod{}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(pod), cur); err != nil {
+				return err
+			}
+			for i, ctr := range pod.Spec.Containers {
+				have, want := cur.Spec.Containers[i].Resources.Limits.Memory(), ctr.Resources.Limits.Memory()
+				if !have.IsZero() && !want.IsZero() && want.Cmp(*have) < 0 {
+					return apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, pod.Name, field.ErrorList{
+						field.Forbidden(field.NewPath("spec", "containers").Index(i).Child("resources", "limits").Key("memory"),
+							"memory limits cannot be decreased unless resizePolicy is RestartContainer"),
+					})
+				}
+			}
+			cur.Spec.Containers = pod.Spec.Containers
+			return c.Update(ctx, cur)
+		},
+	}
+}
+
+// Before Kubernetes 1.34 the API refuses to lower a memory limit in place.
+// Retrying cannot succeed, so the change lands on a fresh pod once the process
+// is offline, like a removed limit.
+func TestRefusedMemoryDecreaseRecreatesThePod(t *testing.T) {
+	resizes := 0
+	h := newHarnessWith(t, k133Resize(&resizes, nil), newGS(), newClass())
+	h.reconcile(2)
+	h.createPod(true)
+	h.reconcile(2)
+
+	h.updateGS(func(gs *v1alpha1.GameServer) {
+		gs.Spec.Panel.Settings = settingsJSON(1024, 200, 5120, "ghcr.io/pelican-eggs/yolks:java_21", false)
+	})
+	h.reconcile(1)
+
+	gs := h.gs()
+	if c := meta.FindStatusCondition(gs.Status.Conditions, v1alpha1.ConditionResizePending); c == nil || c.Status != metav1.ConditionTrue || c.Reason != "RecreateRequired" {
+		t.Fatalf("resize condition %+v", c)
+	}
+	if c := meta.FindStatusCondition(gs.Status.Conditions, v1alpha1.ConditionRecreatePending); c == nil || c.Status != metav1.ConditionTrue || c.Reason != "ResizeNeedsRecreate" {
+		t.Fatalf("recreate condition %+v", c)
+	}
+	if h.pod() != nil {
+		t.Fatal("offline server: the pod must be recreated so the decrease can land")
+	}
+
+	h.createPod(true)
+	h.reconcile(2)
+	pod := h.pod()
+	if pod == nil {
+		t.Fatal("pod not recreated")
+	}
+	want := render.GameResources(settings.Build{MemoryLimit: 1024, CPULimit: 200}, newClass().Spec.Resources)
+	i := render.GameContainerIndex(&pod.Spec)
+	if got := pod.Spec.Containers[i].Resources.Limits.Memory(); got.Cmp(*want.Limits.Memory()) != 0 {
+		t.Fatalf("new pod memory limit %v, want %v", got, want.Limits.Memory())
+	}
+	gs = h.gs()
+	if c := meta.FindStatusCondition(gs.Status.Conditions, v1alpha1.ConditionResizePending); c == nil || c.Status != metav1.ConditionFalse {
+		t.Fatalf("resize should have settled: %+v", c)
+	}
+	if meta.IsStatusConditionTrue(gs.Status.Conditions, v1alpha1.ConditionRecreatePending) {
+		t.Fatal("recreate should have settled")
+	}
+}
+
+// A running server keeps its pod; the refused decrease waits for offline.
+func TestRefusedMemoryDecreaseWaitsForOffline(t *testing.T) {
+	resizes := 0
+	h := newHarnessWith(t, k133Resize(&resizes, nil), newGS(), newClass())
+	h.reconcile(2)
+	h.createPod(true)
+	h.reconcile(2)
+	h.agent.state = v1alpha1.ProcessRunning
+
+	h.updateGS(func(gs *v1alpha1.GameServer) {
+		gs.Spec.Panel.Settings = settingsJSON(1024, 200, 5120, "ghcr.io/pelican-eggs/yolks:java_21", false)
+	})
+	h.reconcile(2)
+
+	if h.pod() == nil {
+		t.Fatal("a running server must not be killed for a resource change")
+	}
+	gs := h.gs()
+	if c := meta.FindStatusCondition(gs.Status.Conditions, v1alpha1.ConditionResizePending); c == nil || c.Reason != "RecreateRequired" {
+		t.Fatalf("resize condition %+v", c)
+	}
+	if !meta.IsStatusConditionTrue(gs.Status.Conditions, v1alpha1.ConditionRecreatePending) {
+		t.Fatal("recreate should stay pending while the process runs")
+	}
+}
+
+// Increases still apply in place on 1.33.
+func TestMemoryIncreaseStillResizesInPlace(t *testing.T) {
+	resizes := 0
+	h := newHarnessWith(t, k133Resize(&resizes, nil), newGS(), newClass())
+	h.reconcile(2)
+	h.createPod(true)
+	h.reconcile(2)
+	uid := h.pod().UID
+
+	h.updateGS(func(gs *v1alpha1.GameServer) {
+		gs.Spec.Panel.Settings = settingsJSON(4096, 200, 5120, "ghcr.io/pelican-eggs/yolks:java_21", false)
+	})
+	h.reconcile(2)
+
+	if p := h.pod(); p == nil || p.UID != uid {
+		t.Fatal("an increase must be applied to the running pod")
+	}
+	gs := h.gs()
+	if c := meta.FindStatusCondition(gs.Status.Conditions, v1alpha1.ConditionResizePending); c == nil || c.Status != metav1.ConditionFalse || c.Reason != "Applied" {
+		t.Fatalf("resize condition %+v", c)
+	}
+	if meta.IsStatusConditionTrue(gs.Status.Conditions, v1alpha1.ConditionRecreatePending) {
+		t.Fatal("an applied resize must not recreate")
+	}
+}
+
+// Errors a retry can fix (conflicts, timeouts, other validation failures)
+// keep being retried in place; only the refused decrease recreates.
+func TestOtherResizeErrorsStillRetry(t *testing.T) {
+	for name, err := range map[string]error{
+		"conflict": apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, names.Pod(uuid), fmt.Errorf("the object has been modified")),
+		"timeout":  apierrors.NewTimeoutError("request timed out", 1),
+		"other invalid": apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, names.Pod(uuid), field.ErrorList{
+			field.Invalid(field.NewPath("spec", "containers").Index(0).Child("resources", "requests").Key("cpu"), "0", "must be greater than zero"),
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			resizes := 0
+			h := newHarnessWith(t, k133Resize(&resizes, err), newGS(), newClass())
+			h.reconcile(2)
+			h.createPod(true)
+			h.reconcile(2)
+
+			h.updateGS(func(gs *v1alpha1.GameServer) {
+				gs.Spec.Panel.Settings = settingsJSON(1024, 200, 5120, "ghcr.io/pelican-eggs/yolks:java_21", false)
+			})
+			h.reconcile(2)
+
+			if h.pod() == nil {
+				t.Fatal("a retryable resize error must not recreate the pod")
+			}
+			gs := h.gs()
+			if c := meta.FindStatusCondition(gs.Status.Conditions, v1alpha1.ConditionResizePending); c == nil || c.Reason != "ResizeFailed" {
+				t.Fatalf("resize condition %+v", c)
+			}
+			if meta.IsStatusConditionTrue(gs.Status.Conditions, v1alpha1.ConditionRecreatePending) {
+				t.Fatal("recreate must not be pending")
+			}
+			if resizes < 2 {
+				t.Fatalf("%d resize attempts, want a retry on every reconcile", resizes)
+			}
+		})
+	}
+}
+
+func TestResizeRefusedByAPI(t *testing.T) {
+	memPath := field.NewPath("spec", "containers").Index(1).Child("resources", "limits").Key("memory")
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"1.33 memory decrease", apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "p", field.ErrorList{field.Forbidden(memPath, "memory limits cannot be decreased unless resizePolicy is RestartContainer")}), true},
+		{"1.33 memory limit added", apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "p", field.ErrorList{field.Forbidden(memPath, "memory limits cannot be added unless resizePolicy is RestartContainer")}), true},
+		{"wrapped", fmt.Errorf("resize: %w", apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "p", field.ErrorList{field.Forbidden(memPath, "memory limits cannot be decreased unless resizePolicy is RestartContainer")})), true},
+		{"other field", apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "p", field.ErrorList{field.Invalid(field.NewPath("spec", "containers").Index(1).Child("resources", "limits").Key("cpu"), "0", "bad")}), false},
+		{"rbac forbidden", apierrors.NewForbidden(schema.GroupResource{Resource: "pods/resize"}, "p", fmt.Errorf("memory limits cannot be decreased")), false},
+		{"conflict", apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, "p", fmt.Errorf("modified")), false},
+		{"nil", nil, false},
+	} {
+		if got := resizeRefused(tc.err); got != tc.want {
+			t.Errorf("%s: resizeRefused = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

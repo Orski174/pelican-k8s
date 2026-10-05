@@ -802,7 +802,7 @@ Wings HTTP API (`Authorization: Bearer <agent token>`, §5.4).
 
 | Change | Operator action |
 |---|---|
-| `build.memory_limit/cpu_limit` | Patch the pod's `resize` subresource (in-place resize is stable in Kubernetes 1.35). If the result is `Infeasible` or `Deferred`, set `ResizePending` and apply at the next recreate |
+| `build.memory_limit/cpu_limit` | Patch the pod's `resize` subresource (in-place resize is stable in Kubernetes 1.35). If the result is `Infeasible` or `Deferred`, set `ResizePending` and apply at the next recreate. A change the resize subresource refuses (removing a limit; lowering or adding a memory limit before Kubernetes 1.34) sets `ResizePending=RecreateRequired` and recreates the pod once the process is offline |
 | `build.disk_space` | Expand the PVC (never shrink; a shrink sets a condition) |
 | `allocations` | Update the exposure Service and NetworkPolicy. No pod change: `containerPort` is informational for Services, and `SERVER_PORT` is applied by Wings' sync at the next start. HostPort mode is the exception and marks `RecreatePending` |
 | `container.image` | Update the StatefulSet template (OnDelete) and set `RecreatePending`. The pod is deleted only when the process is `offline` (§8.5) |

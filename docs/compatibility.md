@@ -15,7 +15,7 @@
 | Activity log | ✅ | Per-agent SQLite on the volume, forwarded through the gateway |
 | Suspension, deauthorize | ✅ | |
 | Image change at next start | ✅ | Pod recreate at the next safe point, digest pinned |
-| Live resource changes | ✅ | In-place pod resize; `ResizePending` when deferred |
+| Live resource changes | ✅ | In-place pod resize; `ResizePending` when deferred. On Kubernetes 1.33 a lower memory limit needs a new pod, created once the process is offline |
 | Disk limit | ⚠️ | Wings soft limit plus the PVC hard limit; PVCs cannot shrink |
 | `/api/system` Docker fields, image prune, docker disk | ⚠️ | Stubbed |
 | Container hostname | ⚠️ | `gs-<uuid>-0`; `/etc/machine-id` is provided |

@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Lowering a server's memory in the Panel takes effect on Kubernetes 1.33. Before 1.34 the `resize` subresource refuses to lower the memory limit of a container whose `resizePolicy` is `NotRequired`, and the operator retried that resize on every reconcile: `ResizePending` stayed `ResizeFailed`, stopping and starting the server kept the pod and its old limit, and the change only landed when something else recreated the pod. A resize refused this way is now handled like a removed limit: `ResizePending=RecreateRequired`, and the pod is recreated once the process is offline. Kubernetes 1.34 and later still apply the decrease in place. Other resize errors are retried as before.
+
 ## [1.0.1] - 2026-10-02
 
 Republishes 1.0.0 with a tree that matches its tag. The images and the OCI chart of 1.0.0 were correct; anything installed from a checkout or the `v1.0.0` git tag was not.
