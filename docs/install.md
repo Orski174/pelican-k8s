@@ -101,6 +101,11 @@ second Service for it:
 | `NodePort` (default, port 30022) | SFTP port `30022`, alias = a node address |
 | `LoadBalancer` | SFTP port `2022`, alias = the LB address |
 
+`gateway.sftp.service.externalTrafficPolicy` defaults to `Local`, which keeps the
+client's address: the gateway passes it to the Panel's SFTP login check and
+activity log. Set it to `Cluster` to put SFTP on the same MetalLB address as your
+game servers ([below](#sharing-one-address)).
+
 ### Game port exposure
 
 **Choose this before you create your first server.** Nearly every game's default
@@ -160,9 +165,37 @@ Because the Service is pinned to the allocation IP, the address a player sees in
 the Panel is by construction the address MetalLB announces — the Panel needs no
 extra plumbing to learn it.
 
+#### Sharing one address
+
 Several servers can share one address: `sharingAnnotation` (set by the provider)
-makes MetalLB accept it as long as the ports do not overlap, which the Panel
-already guarantees per allocation IP.
+lets MetalLB put them on it as long as the ports do not overlap, which the Panel
+already guarantees per allocation IP, **and** every Service on the address uses
+`externalTrafficPolicy: Cluster`
+([MetalLB: IP address sharing](https://metallb.io/usage/#ip-address-sharing);
+Services that select the same pods are the only exception, and different servers
+never do). With the class default `Local`, the second server's Service waits for
+its pinned address forever. The same applies to the SFTP Service:
+
+```yaml
+defaultClass:
+  spec:
+    exposure:
+      externalTrafficPolicy: Cluster
+      loadBalancer:
+        provider: metallb     # sharing key pelican-<IP>
+gateway:
+  sftp:
+    service:
+      type: LoadBalancer
+      externalTrafficPolicy: Cluster
+      annotations:
+        metallb.io/loadBalancerIPs: 203.0.113.10
+        metallb.io/allow-shared-ip: pelican-203.0.113.10   # the key the operator uses
+```
+
+`Cluster` costs the client address: game servers and the Panel's SFTP login
+check see a node address instead. Give each server its own address if a game
+needs the real one (IP bans, per-IP limits).
 
 ## 4. Verify
 

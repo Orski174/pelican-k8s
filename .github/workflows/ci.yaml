@@ -106,6 +106,9 @@ jobs:
           helm lint charts/pelican-k8s --set gateway.panelURL=https://panel.example.com --set gateway.nodeTokenID=id --set gateway.nodeToken=token
           helm template t charts/pelican-k8s --kube-version 1.35.0 --set gateway.panelURL=https://panel.example.com --set gateway.nodeTokenID=id --set gateway.nodeToken=token > /dev/null
           helm template t charts/pelican-k8s --kube-version 1.35.0 --set gateway.panelURL=https://panel.example.com --set gateway.nodeTokenID=id --set gateway.nodeToken=token --set openshift.enabled=true --set gateway.route.enabled=true --set gateway.route.host=wings.example.com > /dev/null
+          # The SFTP Service keeps Local by default and takes the configured policy
+          helm template t charts/pelican-k8s --kube-version 1.35.0 --set gateway.panelURL=https://panel.example.com --set gateway.nodeTokenID=id --set gateway.nodeToken=token --show-only templates/gateway.yaml | grep -qx '  externalTrafficPolicy: Local'
+          helm template t charts/pelican-k8s --kube-version 1.35.0 --set gateway.panelURL=https://panel.example.com --set gateway.nodeTokenID=id --set gateway.nodeToken=token --set gateway.sftp.service.type=LoadBalancer --set gateway.sftp.service.externalTrafficPolicy=Cluster --show-only templates/gateway.yaml | grep -qx '  externalTrafficPolicy: Cluster'
       - name: Lint pelican-panel
         run: |
           helm lint charts/pelican-panel

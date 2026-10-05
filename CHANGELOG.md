@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `gateway.sftp.service.externalTrafficPolicy` (default `Local`, unchanged). The chart hard-coded `Local` on the SFTP Service, and MetalLB only shares an address between Services that all use `Cluster` (or select the same pods), so SFTP could not sit on the address of the game servers it serves. docs/install.md now says the same for game servers sharing an address: the class default `Local` leaves the second server's Service without its pinned IP, and `exposure.externalTrafficPolicy: Cluster` is required. `Cluster` costs the client address, which the Panel otherwise sees in its SFTP login check and activity log.
+
 ## [1.0.1] - 2026-10-02
 
 Republishes 1.0.0 with a tree that matches its tag. The images and the OCI chart of 1.0.0 were correct; anything installed from a checkout or the `v1.0.0` git tag was not.

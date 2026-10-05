@@ -44,6 +44,7 @@ them yourself: `kubectl apply -f charts/pelican-k8s/crds`.
 | `gateway.uploadLimitMiB` | `100` | Browser upload limit (match the agent and ingress body limits) |
 | `gateway.extraCA.configMap` / `.key` | `""` / `ca.crt` | ConfigMap with a PEM CA to trust for the Panel's TLS (private CAs, OpenShift router CA) |
 | `gateway.sftp.service.type` / `.port` / `.nodePort` | `NodePort` / `2022` / `30022` | How users reach SFTP |
+| `gateway.sftp.service.externalTrafficPolicy` | `Local` | `Cluster` lets the SFTP Service share a MetalLB address with game servers; the Panel then sees a node address instead of the client's |
 | `gateway.sftp.keyOnly` | `false` | Disable SFTP password logins |
 | `gateway.sftp.hostKeySecret` | `pelican-gateway-sftp-hostkey` | Secret holding the generated SSH host key |
 | `gateway.ingress.*` | disabled | Ingress for the Wings API (needs long timeouts, see docs) |
