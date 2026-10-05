@@ -285,7 +285,8 @@ type GameServerClassSpec struct {
 	// TerminationGracePeriodSeconds must exceed Wings' 10 minute stop wait.
 	// +kubebuilder:default=660
 	TerminationGracePeriodSeconds int64 `json:"terminationGracePeriodSeconds,omitempty"`
-	// NodeSelector, Tolerations and PriorityClassName are applied to game pods.
+	// NodeSelector, Tolerations and PriorityClassName are applied to game pods
+	// and install Jobs.
 	NodeSelector      map[string]string   `json:"nodeSelector,omitempty"`
 	Tolerations       []corev1.Toleration `json:"tolerations,omitempty"`
 	PriorityClassName string              `json:"priorityClassName,omitempty"`

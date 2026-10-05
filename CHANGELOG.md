@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Install Jobs run at the class's `priorityClassName`. `docs/classes.md` documents `nodeSelector`, `tolerations` and `priorityClassName` as applied to game pods and install Jobs, but the Job only copied the first two, so an install ran at the cluster default priority (usually 0) and outranked game pods of a class set deliberately low. Under node pressure an install can now be preempted like the game pod it belongs to; the Panel reports the failed install and it can be retried.
+
 ## [1.0.1] - 2026-10-02
 
 Republishes 1.0.0 with a tree that matches its tag. The images and the OCI chart of 1.0.0 were correct; anything installed from a checkout or the `v1.0.0` git tag was not.

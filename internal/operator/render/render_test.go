@@ -329,6 +329,23 @@ func TestInstallJob(t *testing.T) {
 	}
 }
 
+// The class scheduling fields apply to install Jobs as well as game pods
+// (docs/classes.md); an install must not outrank a deliberately low class.
+func TestInstallJobSchedulingFollowsClass(t *testing.T) {
+	in := testInput(t, func(i *Input) {
+		i.Class.Spec.NodeSelector = map[string]string{"pool": "games"}
+		i.Class.Spec.Tolerations = []corev1.Toleration{{Key: "games", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}}
+		i.Class.Spec.PriorityClassName = "games-low"
+	})
+	spec := InstallJob(in, 2).Spec.Template.Spec
+	if spec.NodeSelector["pool"] != "games" || len(spec.Tolerations) != 1 || spec.Tolerations[0].Key != "games" {
+		t.Fatalf("placement %+v / %+v", spec.NodeSelector, spec.Tolerations)
+	}
+	if spec.PriorityClassName != "games-low" {
+		t.Fatalf("priorityClassName %q, want the class value", spec.PriorityClassName)
+	}
+}
+
 func TestContainerImageRef(t *testing.T) {
 	if ContainerImageRef("img:tag", "sha256:abc") != "img:tag@sha256:abc" || ContainerImageRef("img:tag@sha256:old", "sha256:new") != "img:tag@sha256:new" || ContainerImageRef("img:tag", "") != "img:tag" {
 		t.Fatal("image ref")

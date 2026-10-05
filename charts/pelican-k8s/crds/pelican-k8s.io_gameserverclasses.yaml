@@ -264,8 +264,9 @@ spec:
               nodeSelector:
                 additionalProperties:
                   type: string
-                description: NodeSelector, Tolerations and PriorityClassName are applied
-                  to game pods.
+                description: |-
+                  NodeSelector, Tolerations and PriorityClassName are applied to game pods
+                  and install Jobs.
                 type: object
               priorityClassName:
                 type: string
