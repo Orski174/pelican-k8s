@@ -82,6 +82,11 @@ gateway:
       type: NodePort         # NodePort | LoadBalancer | ClusterIP
       port: 2022
       nodePort: 30022
+      # Local keeps the client address, which the gateway passes to the Panel's
+      # SFTP login check and activity log. Cluster is required to put SFTP on a
+      # MetalLB address shared with game Services (docs/install.md#metallb);
+      # the Panel then sees a node address instead.
+      externalTrafficPolicy: Local   # Local | Cluster; ignored for ClusterIP
       annotations: {}
   service:
     type: ClusterIP

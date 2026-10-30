@@ -236,7 +236,7 @@
               "default": "pelican-gateway-sftp-hostkey"
             },
             "service": {
-              "description": "The Service exposing SFTP to players. Non-ClusterIP types use externalTrafficPolicy Local.",
+              "description": "The Service exposing SFTP to players. Non-ClusterIP types use the externalTrafficPolicy below, Local unless set.",
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -256,6 +256,12 @@
                   "minimum": 0,
                   "maximum": 65535,
                   "default": 30022
+                },
+                "externalTrafficPolicy": {
+                  "description": "externalTrafficPolicy of the SFTP Service, ignored for ClusterIP. Local keeps the client's source IP, which the gateway passes to the Panel's SFTP login check and activity log; MetalLB only shares a LoadBalancer IP between Services that all use Cluster or select the same pods, so Cluster is required to put SFTP on the address of the game servers it serves. See docs/install.md.",
+                  "type": "string",
+                  "enum": ["Local", "Cluster"],
+                  "default": "Local"
                 },
                 "annotations": {
                   "description": "Annotations of the SFTP Service (load balancer settings, MetalLB address pinning).",

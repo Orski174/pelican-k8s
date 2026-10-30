@@ -103,6 +103,13 @@ second Service for it:
 | `NodePort` (default, port 30022) | SFTP port `30022`, alias = a node address |
 | `LoadBalancer` | SFTP port `2022`, alias = the LB address |
 
+`gateway.sftp.service.externalTrafficPolicy` defaults to `Local`, which keeps the
+client's address: the gateway passes it to the Panel's SFTP login check and
+activity log. MetalLB shares a load-balancer IP between Services only when they
+all use `Cluster` or select the same pods, and the SFTP Service selects the
+gateway, so set it to `Cluster` to put SFTP on the address of the game servers
+it serves ([MetalLB](#metallb) below).
+
 ### Game port exposure
 
 **Choose this before you create your first server.** Nearly every game's default
@@ -166,7 +173,9 @@ not fit there stays `Pending`, so under `Local` picking an allocation's IP is
 picking a node; see [Planning addresses under `Local`](classes.md#planning-addresses-under-local).
 To spread the servers of one IP over several
 nodes instead, set `externalTrafficPolicy: Cluster`; the game servers then see
-a node address instead of the player's.
+a node address instead of the player's. The SFTP Service selects the gateway
+pods, not a server's, so an address shared with game Services also needs
+`gateway.sftp.service.externalTrafficPolicy: Cluster` (see [SFTP](#sftp)).
 
 ## 4. Verify
 

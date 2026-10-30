@@ -60,6 +60,7 @@ file against it when the file starts with
 | `gateway.extraCA.configMap` / `.key` | `""` / `ca.crt` | ConfigMap with a PEM CA to trust for the Panel's TLS (private CAs, OpenShift router CA) |
 | `gateway.service.type` / `.port` | `ClusterIP` / `8080` | Service of the Wings API (the Ingress or Route points at it) |
 | `gateway.sftp.service.type` / `.port` / `.nodePort` / `.annotations` | `NodePort` / `2022` / `30022` / `{}` | How users reach SFTP |
+| `gateway.sftp.service.externalTrafficPolicy` | `Local` | `Cluster` lets the SFTP Service share a MetalLB address with the game Services; the Panel then sees a node address instead of the client's (ignored for `ClusterIP`) |
 | `gateway.sftp.keyOnly` | `false` | Disable SFTP password logins |
 | `gateway.sftp.hostKeySecret` | `pelican-gateway-sftp-hostkey` | Secret holding the generated SSH host key |
 | `gateway.ingress.*` | disabled | Ingress for the Wings API (needs long timeouts, see docs) |

@@ -174,7 +174,7 @@ metadata:
 spec:
   type: {{ .Values.gateway.sftp.service.type }}
   {{- if ne .Values.gateway.sftp.service.type "ClusterIP" }}
-  externalTrafficPolicy: Local
+  externalTrafficPolicy: {{ .Values.gateway.sftp.service.externalTrafficPolicy | default "Local" }}
   {{- end }}
   selector:
     app.kubernetes.io/name: pelican-gateway
